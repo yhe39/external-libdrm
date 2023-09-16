@@ -33,16 +33,15 @@
  *
  */
 
-/*
- * TODO the types we are after are defined in different headers on different
- * platforms find which headers to include to get uint32_t
- */
-
+#include <assert.h>
 #include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <sys/ioctl.h>
-#ifdef HAVE_SYS_SYSCTL_H
+#if HAVE_SYS_SYSCTL_H
+#ifdef __FreeBSD__
+#include <sys/types.h>
+#endif
 #include <sys/sysctl.h>
 #endif
 #include <stdio.h>
@@ -52,6 +51,7 @@
 #include "xf86drmMode.h"
 #include "xf86drm.h"
 #include <drm.h>
+#include <drm_fourcc.h>
 #include <string.h>
 #include <dirent.h>
 #include <unistd.h>
@@ -150,6 +150,16 @@ drm_public void drmModeFreeEncoder(drmModeEncoderPtr ptr)
 /*
  * ModeSetting functions.
  */
+
+drm_public int drmIsKMS(int fd)
+{
+	struct drm_mode_card_res res = {0};
+
+	if (drmIoctl(fd, DRM_IOCTL_MODE_GETRESOURCES, &res) != 0)
+		return 0;
+
+	return res.count_crtcs > 0 && res.count_connectors > 0 && res.count_encoders > 0;
+}
 
 drm_public drmModeResPtr drmModeGetResources(int fd)
 {
@@ -683,6 +693,7 @@ drm_public void drmModeFreeProperty(drmModePropertyPtr ptr)
 
 	drmFree(ptr->values);
 	drmFree(ptr->enums);
+	drmFree(ptr->blob_ids);
 	drmFree(ptr);
 }
 
@@ -716,6 +727,112 @@ drm_public drmModePropertyBlobPtr drmModeGetPropertyBlob(int fd,
 err_allocs:
 	drmFree(U642VOID(blob.data));
 	return r;
+}
+
+static inline const uint32_t *
+get_formats_ptr(const struct drm_format_modifier_blob *blob)
+{
+	return (const uint32_t *)(((uint8_t *)blob) + blob->formats_offset);
+}
+
+static inline const struct drm_format_modifier *
+get_modifiers_ptr(const struct drm_format_modifier_blob *blob)
+{
+	return (const struct drm_format_modifier *)(((uint8_t *)blob) +
+						    blob->modifiers_offset);
+}
+
+static bool _drmModeFormatModifierGetNext(const drmModePropertyBlobRes *blob,
+					  drmModeFormatModifierIterator *iter)
+{
+	const struct drm_format_modifier *blob_modifiers, *mod;
+	const struct drm_format_modifier_blob *fmt_mod_blob;
+	const uint32_t *blob_formats;
+
+	assert(blob && iter);
+
+	fmt_mod_blob = blob->data;
+	blob_modifiers = get_modifiers_ptr(fmt_mod_blob);
+	blob_formats = get_formats_ptr(fmt_mod_blob);
+
+	/* fmt_idx and mod_idx designate the number of processed formats
+	 * and modifiers.
+	 */
+	if (iter->fmt_idx >= fmt_mod_blob->count_formats ||
+	    iter->mod_idx >= fmt_mod_blob->count_modifiers)
+		return false;
+
+	iter->fmt = blob_formats[iter->fmt_idx];
+	iter->mod = DRM_FORMAT_MOD_INVALID;
+
+	/* From the latest valid found, get the next valid modifier */
+	while (iter->mod_idx < fmt_mod_blob->count_modifiers) {
+		mod = &blob_modifiers[iter->mod_idx++];
+
+		/* Check if the format that fmt_idx designates, belongs to
+		 * this modifier 64-bit window selected via mod->offset.
+		 */
+		if (iter->fmt_idx < mod->offset ||
+		    iter->fmt_idx >= mod->offset + 64)
+			continue;
+		if (!(mod->formats & (1 << (iter->fmt_idx - mod->offset))))
+			continue;
+
+		iter->mod = mod->modifier;
+		break;
+	}
+
+	if (iter->mod_idx == fmt_mod_blob->count_modifiers) {
+		iter->mod_idx = 0;
+		iter->fmt_idx++;
+	}
+
+	/* Since mod_idx reset, in order for the caller to iterate over
+	 * the last modifier of the last format, always return true here
+	 * and early return from the next call.
+	 */
+	return true;
+}
+
+/**
+ * Iterate over formats first and then over modifiers. On each call, iter->fmt
+ * is retained until all associated modifiers are returned. Then, either update
+ * iter->fmt with the next format, or exit if there aren't any left.
+ *
+ * NOTE: clients should not make any assumption on mod_idx and fmt_idx values
+ *
+ * @blob: valid kernel blob holding formats and modifiers
+ * @iter: input and output iterator data. Iter data must be initialised to zero
+ * @return: false, on error or there aren't any further formats or modifiers left.
+ *          true, on success and there are more formats or modifiers.
+ */
+drm_public bool drmModeFormatModifierBlobIterNext(const drmModePropertyBlobRes *blob,
+						  drmModeFormatModifierIterator *iter)
+{
+	drmModeFormatModifierIterator tmp;
+	bool has_fmt;
+
+	if (!blob || !iter)
+		return false;
+
+	tmp.fmt_idx = iter->fmt_idx;
+	tmp.mod_idx = iter->mod_idx;
+
+	/* With the current state of things, DRM/KMS drivers are allowed to
+	 * construct blobs having formats and no modifiers. Userspace can't
+	 * legitimately abort in such cases.
+	 *
+	 * While waiting for the kernel to perhaps disallow formats with no
+	 * modifiers in IN_FORMATS blobs, skip the format altogether.
+	 */
+	do {
+		has_fmt = _drmModeFormatModifierGetNext(blob, &tmp);
+		if (has_fmt && tmp.mod != DRM_FORMAT_MOD_INVALID)
+			*iter = tmp;
+
+	} while (has_fmt && tmp.mod == DRM_FORMAT_MOD_INVALID);
+
+	return has_fmt;
 }
 
 drm_public void drmModeFreePropertyBlob(drmModePropertyBlobPtr ptr)
@@ -800,21 +917,13 @@ drm_public int drmCheckModesettingSupported(const char *busid)
 	if (found)
 		return 0;
 #elif defined (__FreeBSD__) || defined (__FreeBSD_kernel__)
-	char kbusid[1024], sbusid[1024];
+	char sbusid[1024];
 	char oid[128];
-	int domain, bus, dev, func;
 	int i, modesetting, ret;
 	size_t len;
 
-	ret = sscanf(busid, "pci:%04x:%02x:%02x.%d", &domain, &bus, &dev,
-	    &func);
-	if (ret != 4)
-		return -EINVAL;
-	snprintf(kbusid, sizeof(kbusid), "pci:%04x:%02x:%02x.%d", domain, bus,
-	    dev, func);
-
 	/* How many GPUs do we expect in the machine ? */
-	for (i = 0; i < 16; i++) {
+	for (i = 0; i < 10; i++) {
 		snprintf(oid, sizeof(oid), "hw.dri.%d.busid", i);
 		len = sizeof(sbusid);
 		ret = sysctlbyname(oid, sbusid, &len, NULL, 0);
@@ -823,7 +932,7 @@ drm_public int drmCheckModesettingSupported(const char *busid)
 				continue;
 			return -EINVAL;
 		}
-		if (strcmp(sbusid, kbusid) != 0)
+		if (strcmp(sbusid, busid) != 0)
 			continue;
 		snprintf(oid, sizeof(oid), "hw.dri.%d.modesetting", i);
 		len = sizeof(modesetting);
@@ -1593,4 +1702,39 @@ drmModeRevokeLease(int fd, uint32_t lessee_id)
 	if (ret == 0)
 		return 0;
 	return -errno;
+}
+
+drm_public drmModeFB2Ptr
+drmModeGetFB2(int fd, uint32_t fb_id)
+{
+	struct drm_mode_fb_cmd2 get = {
+		.fb_id = fb_id,
+	};
+	drmModeFB2Ptr ret;
+	int err;
+
+	err = DRM_IOCTL(fd, DRM_IOCTL_MODE_GETFB2, &get);
+	if (err != 0)
+		return NULL;
+
+	ret = drmMalloc(sizeof(drmModeFB2));
+	if (!ret)
+		return NULL;
+
+	ret->fb_id = fb_id;
+	ret->width = get.width;
+	ret->height = get.height;
+	ret->pixel_format = get.pixel_format;
+	ret->flags = get.flags;
+	ret->modifier = get.modifier[0];
+	memcpy(ret->handles, get.handles, sizeof(uint32_t) * 4);
+	memcpy(ret->pitches, get.pitches, sizeof(uint32_t) * 4);
+	memcpy(ret->offsets, get.offsets, sizeof(uint32_t) * 4);
+
+	return ret;
+}
+
+drm_public void drmModeFreeFB2(drmModeFB2Ptr ptr)
+{
+	drmFree(ptr);
 }

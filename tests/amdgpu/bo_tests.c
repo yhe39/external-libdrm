@@ -168,7 +168,7 @@ static void amdgpu_bo_metadata(void)
 	struct amdgpu_bo_info info = {0};
 	int r;
 
-	meta.size_metadata = 1;
+	meta.size_metadata = 4;
 	meta.umd_metadata[0] = 0xdeadbeef;
 
 	r = amdgpu_bo_set_metadata(buffer_handle, &meta);
@@ -177,7 +177,7 @@ static void amdgpu_bo_metadata(void)
 	r = amdgpu_bo_query_info(buffer_handle, &info);
 	CU_ASSERT_EQUAL(r, 0);
 
-	CU_ASSERT_EQUAL(info.metadata.size_metadata, 1);
+	CU_ASSERT_EQUAL(info.metadata.size_metadata, 4);
 	CU_ASSERT_EQUAL(info.metadata.umd_metadata[0], 0xdeadbeef);
 }
 
@@ -267,7 +267,6 @@ static void amdgpu_memory_alloc(void)
 
 static void amdgpu_mem_fail_alloc(void)
 {
-	amdgpu_bo_handle bo;
 	int r;
 	struct amdgpu_bo_alloc_request req = {0};
 	amdgpu_bo_handle buf_handle;
@@ -282,7 +281,7 @@ static void amdgpu_mem_fail_alloc(void)
 	CU_ASSERT_EQUAL(r, -ENOMEM);
 
 	if (!r) {
-		r = amdgpu_bo_free(bo);
+		r = amdgpu_bo_free(buf_handle);
 		CU_ASSERT_EQUAL(r, 0);
 	}
 }

@@ -19,7 +19,7 @@
 # SOFTWARE.
 
 
-libdrm_nouveau = shared_library(
+libdrm_nouveau = library(
   'drm_nouveau',
   [files( 'nouveau.c', 'pushbuf.c', 'bufctx.c', 'abi16.c'), config_file],
   c_args : libdrm_c_args,
@@ -52,8 +52,11 @@ pkg.generate(
 )
 
 test(
-  'nouveau-symbol-check',
-  prog_bash,
-  env : env_test,
-  args : [files('nouveau-symbol-check'), libdrm_nouveau]
+  'nouveau-symbols-check',
+  symbols_check,
+  args : [
+    '--lib', libdrm_nouveau,
+    '--symbols-file', files('nouveau-symbols.txt'),
+    '--nm', prog_nm.path(),
+  ],
 )

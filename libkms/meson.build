@@ -41,7 +41,7 @@ if with_exynos
   libkms_include += include_directories('../exynos')
 endif
 
-libkms = shared_library(
+libkms = library(
   'kms',
   [files_libkms, config_file],
   c_args : libdrm_c_args,
@@ -68,8 +68,11 @@ pkg.generate(
 )
 
 test(
-  'kms-symbol-check',
-  prog_bash,
-  env : env_test,
-  args : [files('kms-symbol-check'), libkms]
+  'kms-symbols-check',
+  symbols_check,
+  args : [
+    '--lib', libkms,
+    '--symbols-file', files('kms-symbols.txt'),
+    '--nm', prog_nm.path(),
+  ],
 )

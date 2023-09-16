@@ -18,7 +18,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-libdrm_omap = shared_library(
+libdrm_omap = library(
   'drm_omap',
   [files('omap_drm.c'), config_file],
   include_directories : [inc_root, inc_drm],
@@ -47,8 +47,11 @@ pkg.generate(
 )
 
 test(
-  'omap-symbol-check',
-  prog_bash,
-  env : env_test,
-  args : [files('omap-symbol-check'), libdrm_omap]
+  'omap-symbols-check',
+  symbols_check,
+  args : [
+    '--lib', libdrm_omap,
+    '--symbols-file', files('omap-symbols.txt'),
+    '--nm', prog_nm.path(),
+  ],
 )

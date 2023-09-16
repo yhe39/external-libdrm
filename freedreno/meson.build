@@ -39,7 +39,7 @@ if with_freedreno_kgsl
   )
 endif
 
-libdrm_freedreno = shared_library(
+libdrm_freedreno = library(
   'drm_freedreno',
   [files_freedreno, config_file],
   c_args : libdrm_c_args,
@@ -70,8 +70,11 @@ pkg.generate(
 )
 
 test(
-  'freedreno-symbol-check',
-  prog_bash,
-  env : env_test,
-  args : [files('freedreno-symbol-check'), libdrm_freedreno]
+  'freedreno-symbols-check',
+  symbols_check,
+  args : [
+    '--lib', libdrm_freedreno,
+    '--symbols-file', files('freedreno-symbols.txt'),
+    '--nm', prog_nm.path(),
+  ],
 )

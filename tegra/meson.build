@@ -18,7 +18,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-libdrm_tegra = shared_library(
+libdrm_tegra = library(
   'drm_tegra',
   [files('tegra.c'), config_file],
   include_directories : [inc_root, inc_drm],
@@ -46,8 +46,11 @@ pkg.generate(
 )
 
 test(
-  'tegra-symbol-check',
-  prog_bash,
-  env : env_test,
-  args : [files('tegra-symbol-check'), libdrm_tegra]
+  'tegra-symbols-check',
+  symbols_check,
+  args : [
+    '--lib', libdrm_tegra,
+    '--symbols-file', files('tegra-symbols.txt'),
+    '--nm', prog_nm.path(),
+  ],
 )

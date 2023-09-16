@@ -546,6 +546,19 @@ int amdgpu_device_initialize(int fd,
 */
 int amdgpu_device_deinitialize(amdgpu_device_handle device_handle);
 
+/**
+ *
+ * /param device_handle - \c [in] Device handle.
+ *                           See #amdgpu_device_initialize()
+ *
+ * \return Returns the drm fd used for operations on this
+ *         device. This is still owned by the library and hence
+ *         should not be closed. Guaranteed to be valid until
+ *         #amdgpu_device_deinitialize gets called.
+ *
+*/
+int amdgpu_device_get_fd(amdgpu_device_handle device_handle);
+
 /*
  * Memory Management
  *
@@ -942,6 +955,21 @@ int amdgpu_cs_ctx_override_priority(amdgpu_device_handle dev,
 int amdgpu_cs_query_reset_state(amdgpu_context_handle context,
 				uint32_t *state, uint32_t *hangs);
 
+/**
+ * Query reset state for the specific GPU Context.
+ *
+ * \param   context - \c [in]  GPU Context handle
+ * \param   flags   - \c [out] A combination of AMDGPU_CTX_QUERY2_FLAGS_*
+ *
+ * \return   0 on success\n
+ *          <0 - Negative POSIX Error code
+ *
+ * \sa amdgpu_cs_ctx_create()
+ *
+*/
+int amdgpu_cs_query_reset_state2(amdgpu_context_handle context,
+				 uint64_t *flags);
+
 /*
  * Command Buffers Management
  *
@@ -1223,6 +1251,23 @@ int amdgpu_query_sensor_info(amdgpu_device_handle dev, unsigned sensor_type,
 			     unsigned size, void *value);
 
 /**
+ * Query information about video capabilities
+ *
+ * The return sizeof(struct drm_amdgpu_info_video_caps)
+ *
+ * \param   dev         - \c [in] Device handle. See #amdgpu_device_initialize()
+ * \param   caps_type   - \c [in] AMDGPU_INFO_VIDEO_CAPS_DECODE(ENCODE)
+ * \param   size        - \c [in] Size of the returned value.
+ * \param   value       - \c [out] Pointer to the return value.
+ *
+ * \return   0 on success\n
+ *          <0 - Negative POSIX Error code
+ *
+*/
+int amdgpu_query_video_caps_info(amdgpu_device_handle dev, unsigned cap_type,
+                                 unsigned size, void *value);
+
+/**
  * Read a set of consecutive memory-mapped registers.
  * Not all registers are allowed to be read by userspace.
  *
@@ -1248,6 +1293,7 @@ int amdgpu_read_mm_registers(amdgpu_device_handle dev, unsigned dword_offset,
 */
 #define AMDGPU_VA_RANGE_32_BIT		0x1
 #define AMDGPU_VA_RANGE_HIGH		0x2
+#define AMDGPU_VA_RANGE_REPLAYABLE	0x4
 
 /**
  * Allocate virtual address range
@@ -1591,6 +1637,24 @@ int amdgpu_cs_syncobj_timeline_wait(amdgpu_device_handle dev,
 int amdgpu_cs_syncobj_query(amdgpu_device_handle dev,
 			    uint32_t *handles, uint64_t *points,
 			    unsigned num_handles);
+/**
+ *  Query sync objects last signaled or submitted point.
+ *
+ * \param   dev	    - \c [in] self-explanatory
+ * \param   handles - \c [in] array of sync object handles
+ * \param   points - \c [out] array of sync points returned, which presents
+ * syncobj payload.
+ * \param   num_handles - \c [in] self-explanatory
+ * \param   flags   - \c [in] a bitmask of DRM_SYNCOBJ_QUERY_FLAGS_*
+ *
+ * \return   0 on success\n
+ *          -ETIME - Timeout
+ *          <0 - Negative POSIX Error code
+ *
+ */
+int amdgpu_cs_syncobj_query2(amdgpu_device_handle dev,
+			     uint32_t *handles, uint64_t *points,
+			     unsigned num_handles, uint32_t flags);
 
 /**
  *  Export kernel sync object to shareable fd.
